@@ -1,0 +1,133 @@
+import json
+import numpy as np
+import pickle
+import matplotlib.pyplot as plt
+import tkinter as tk  # Add this import for the GUI
+from tensorflow import keras
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Embedding, GlobalAveragePooling1D
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from sklearn.preprocessing import LabelEncoder
+
+# Load JSON data
+with open('English.json') as file:
+    data = json.load(file)
+
+training_sentences = []
+training_labels = []
+labels = []
+responses = []
+
+# Extract tags, patterns, and responses from both 'tags' and 'tag' keys
+for intent in data['intents']:
+    if 'tag' in intent:
+        tag = intent['tag']
+        labels.append(tag)
+        for pattern in intent['patterns']:
+            training_sentences.append(pattern)
+            training_labels.append(tag)
+        responses.append(intent['responses'])
+
+# Convert labels to unique values using LabelEncoder
+lbl_encoder = LabelEncoder()
+lbl_encoder.fit(labels)
+training_labels_encoded = lbl_encoder.transform(training_labels)
+
+# Tokenization and padding
+vocab_size = 1000
+embedding_dim = 16
+max_len = 20
+oov_token = "<OOV>"
+
+tokenizer = Tokenizer(num_words=vocab_size, oov_token=oov_token)
+tokenizer.fit_on_texts(training_sentences)
+word_index = tokenizer.word_index
+sequences = tokenizer.texts_to_sequences(training_sentences)
+padded_sequences = pad_sequences(sequences, truncating='post', maxlen=max_len)
+
+# Build the model
+num_classes = len(labels)
+model = Sequential()
+model.add(Embedding(vocab_size, embedding_dim, input_length=max_len))
+model.add(GlobalAveragePooling1D())
+model.add(Dense(16, activation='relu'))
+model.add(Dense(16, activation='relu'))
+model.add(Dense(num_classes, activation='softmax'))
+
+model.compile(loss='sparse_categorical_crossentropy',
+            optimizer='adam', metrics=['accuracy'])
+
+model.summary()
+
+# Define hyperparameters
+batch_size = 32
+epochs = 300 # You can adjust the number of epochs as needed
+# Train your model
+history = model.fit(padded_sequences, np.array(training_labels_encoded),
+                    epochs=epochs, batch_size=batch_size,
+                    validation_split=0.2)  # Use validation_split to split training and validation data
+
+# Save the trained model
+model.save("chat_model")
+
+with open('tokenizer.pickle', 'wb') as handle:
+    pickle.dump(tokenizer, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+with open('label_encoder.pickle', 'wb') as ecn_file:
+    pickle.dump(lbl_encoder, ecn_file, protocol=pickle.HIGHEST_PROTOCOL)
+
+# Plot accuracy and loss graph
+plt.figure(figsize=(10, 5))
+plt.subplot(1, 2, 1)
+plt.plot(history.history['accuracy'])
+plt.plot(history.history['val_accuracy'])
+plt.title('Model Accuracy')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.legend(['Train', 'Validation'])
+
+plt.subplot(1, 2, 2)
+plt.plot(history.history['loss'])
+plt.plot(history.history['val_loss'])
+plt.title('Model Loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.legend(['Train', 'Validation'])
+
+plt.tight_layout()
+plt.show()
+
+# Create a simple GUI to display the accuracy and loss data
+class ChatbotGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Chatbot Model Training Report")
+        self.root.geometry("400x200")
+
+        self.accuracy_label = tk.Label(root, text="Accuracy:")
+        self.accuracy_label.pack()
+
+        self.accuracy_value = tk.Label(root, text="0.00")
+        self.accuracy_value.pack()
+
+        self.loss_label = tk.Label(root, text="Loss:")
+        self.loss_label.pack()
+
+        self.loss_value = tk.Label(root, text="0.00")
+        self.loss_value.pack()
+
+    def update_values(self, accuracy, loss):
+        self.accuracy_value.config(text=f"{accuracy:.2f}")
+        self.loss_value.config(text=f"{loss:.2f}")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    chatbot_gui = ChatbotGUI(root)
+
+    # Update GUI with final accuracy and loss
+    final_accuracy = history.history['accuracy'][-1]
+    final_loss = history.history['loss'][-1]
+    chatbot_gui.update_values(final_accuracy, final_loss)
+
+    root.mainloop()
